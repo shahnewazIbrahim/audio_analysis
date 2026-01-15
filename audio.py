@@ -183,71 +183,105 @@ def generate_voice_brief(y, sr, tempo, avg_pitch_hz, f0, voiced_flag):
     return "\n".join(lines)
 
 
-# ------------------ MAIN ------------------
-filename = "your_audio_file.wav"
-
-try:
-    y, sr = librosa.load(filename)
-    print(f"Audio loaded successfully!\nDuration: {librosa.get_duration(y=y, sr=sr):.2f} seconds")
-    print(f"Sampling rate: {sr} Hz")
-except FileNotFoundError:
-    print("Error: File not found. Please provide the correct file name or path.")
-    raise SystemExit
-
-# Tempo (handle array/scalar)
-tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-if isinstance(tempo, np.ndarray):
-    tempo = tempo.item() if tempo.size == 1 else float(np.mean(tempo))
-tempo = float(tempo) if tempo is not None else np.nan
-print(f"Estimated tempo (BPM): {tempo:.2f}")
-
-# Pitch (F0)
-f0, voiced_flag, voiced_probs = librosa.pyin(
-    y,
-    fmin=librosa.note_to_hz("C2"),
-    fmax=librosa.note_to_hz("C7")
-)
-avg_pitch = float(np.nanmean(f0)) if f0 is not None else np.nan
-print(f"Average pitch (Frequency): {avg_pitch:.2f} Hz" if not np.isnan(avg_pitch) else "No clear pitch detected\n")
-
-sound_scale = get_sound_scale(y, sr, avg_pitch)
-
-print("===== SOUND SCALE =====")
-print(f"Loudness (RMS): {sound_scale['loudness_scale']}")
-print(f"Volume Scale (dB): {sound_scale['db_scale']}")
-print(f"Pitch Scale: {sound_scale['pitch_scale']}\n")
+def get_tempo(y, sr):
+    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+    if isinstance(tempo, np.ndarray):
+        tempo = tempo.item() if tempo.size == 1 else float(np.mean(tempo))
+    tempo = float(tempo) if tempo is not None else np.nan
+    return tempo, beat_frames
 
 
-key_info = detect_musical_key(y, sr)
+def get_pitch(y):
+    f0, voiced_flag, voiced_probs = librosa.pyin(
+        y,
+        fmin=librosa.note_to_hz("C2"),
+        fmax=librosa.note_to_hz("C7")
+    )
+    avg_pitch = float(np.nanmean(f0)) if f0 is not None else np.nan
+    return avg_pitch, f0, voiced_flag, voiced_probs
 
-print("===== MUSICAL SCALE / KEY =====")
-print(f"Detected Scale: {key_info['scale']}")
-print(f"Confidence Score: {key_info['confidence']:.2f}")
 
-# ---- Generate briefing ----
-brief = generate_voice_brief(y, sr, tempo, avg_pitch, f0, voiced_flag)
-print("\n" + brief + "\n")
+def analyze_audio(y, sr):
+    tempo, beat_frames = get_tempo(y, sr)
+    avg_pitch, f0, voiced_flag, voiced_probs = get_pitch(y)
+    sound_scale = get_sound_scale(y, sr, avg_pitch)
+    key_info = detect_musical_key(y, sr)
+    brief = generate_voice_brief(y, sr, tempo, avg_pitch, f0, voiced_flag)
 
-# ---- Visualization ----
-plt.figure(figsize=(15, 10))
+    return {
+        "tempo": tempo,
+        "beat_frames": beat_frames,
+        "avg_pitch": avg_pitch,
+        "f0": f0,
+        "voiced_flag": voiced_flag,
+        "voiced_probs": voiced_probs,
+        "sound_scale": sound_scale,
+        "key_info": key_info,
+        "brief": brief
+    }
 
-plt.subplot(3, 1, 1)
-librosa.display.waveshow(y, sr=sr, alpha=0.6)
-plt.title("Waveform (Time Domain)")
-plt.xlabel("Time (s)")
-plt.ylabel("Amplitude")
 
-plt.subplot(3, 1, 2)
-D = librosa.amplitude_to_db(np.abs(librosa.stft(y)), ref=np.max)
-librosa.display.specshow(D, sr=sr, x_axis="time", y_axis="log")
-plt.colorbar(format="%+2.0f dB")
-plt.title("Mel-frequency Spectrogram")
+def create_visualization_figure(y, sr):
+    fig, axes = plt.subplots(3, 1, figsize=(15, 10))
 
-plt.subplot(3, 1, 3)
-mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-librosa.display.specshow(mfccs, x_axis="time")
-plt.colorbar()
-plt.title("MFCC")
+    axes[0].set_title("Waveform (Time Domain)")
+    librosa.display.waveshow(y, sr=sr, alpha=0.6, ax=axes[0])
+    axes[0].set_xlabel("Time (s)")
+    axes[0].set_ylabel("Amplitude")
 
-plt.tight_layout()
-plt.show()
+    D = librosa.amplitude_to_db(np.abs(librosa.stft(y)), ref=np.max)
+    spec_img = librosa.display.specshow(
+        D,
+        sr=sr,
+        x_axis="time",
+        y_axis="log",
+        ax=axes[1]
+    )
+    axes[1].set_title("Mel-frequency Spectrogram")
+    fig.colorbar(spec_img, ax=axes[1], format="%+2.0f dB")
+
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfcc_img = librosa.display.specshow(mfccs, x_axis="time", ax=axes[2])
+    axes[2].set_title("MFCC")
+    fig.colorbar(mfcc_img, ax=axes[2])
+
+    fig.tight_layout()
+    return fig
+
+
+def main(filename="your_audio_file.wav"):
+    try:
+        y, sr = librosa.load(filename)
+        print(f"Audio loaded successfully!\nDuration: {librosa.get_duration(y=y, sr=sr):.2f} seconds")
+        print(f"Sampling rate: {sr} Hz")
+    except FileNotFoundError:
+        print("Error: File not found. Please provide the correct file name or path.")
+        raise SystemExit
+
+    analysis = analyze_audio(y, sr)
+
+    print(f"Estimated tempo (BPM): {analysis['tempo']:.2f}")
+    if not np.isnan(analysis["avg_pitch"]):
+        print(f"Average pitch (Frequency): {analysis['avg_pitch']:.2f} Hz")
+    else:
+        print("No clear pitch detected\n")
+
+    sound_scale = analysis["sound_scale"]
+    print("===== SOUND SCALE =====")
+    print(f"Loudness (RMS): {sound_scale['loudness_scale']}")
+    print(f"Volume Scale (dB): {sound_scale['db_scale']}")
+    print(f"Pitch Scale: {sound_scale['pitch_scale']}\n")
+
+    key_info = analysis["key_info"]
+    print("===== MUSICAL SCALE / KEY =====")
+    print(f"Detected Scale: {key_info['scale']}")
+    print(f"Confidence Score: {key_info['confidence']:.2f}")
+
+    print("\n" + analysis["brief"] + "\n")
+
+    fig = create_visualization_figure(y, sr)
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
